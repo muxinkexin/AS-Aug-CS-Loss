@@ -1,6 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
 import os
+import csv
+import hashlib
 import cv2
 import numpy as np
 
@@ -22,6 +24,14 @@ splits_dir = os.path.join(os.path.dirname(__file__), "splits")
 # baseline of 0.1 units. The KITTI rig has a baseline of 54cm. Therefore,
 # to convert our stereo predictions to real-world scale we multiply our depths by 5.4.
 STEREO_SCALE_FACTOR = 5.4
+
+
+def checkpoint_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def compute_errors(gt, pred):
@@ -62,6 +72,15 @@ def evaluate(opt):
     MIN_DEPTH = 1e-3
     MAX_DEPTH = 80
 
+    eval_width = getattr(opt, "eval_width", None)
+    eval_height = getattr(opt, "eval_height", None)
+    if (eval_width is None) != (eval_height is None):
+        raise ValueError("--eval_width and --eval_height must be provided together")
+    override_size = eval_width is not None
+    if override_size and min(eval_width, eval_height) <= 0:
+        raise ValueError("evaluation dimensions must be positive")
+    output_csv = getattr(opt, "output_csv", None)
+
     assert sum((opt.eval_mono, opt.eval_stereo)) == 1, \
         "Please choose mono or stereo evaluation by setting either --eval_mono or --eval_stereo"
     device = torch.device("cuda" if torch.cuda.is_available() and not opt.no_cuda else "cpu")
@@ -82,8 +101,13 @@ def evaluate(opt):
 
         encoder_dict = torch.load(encoder_path, map_location=device, weights_only=False)
 
+        input_height = eval_height if override_size else encoder_dict['height']
+        input_width = eval_width if override_size else encoder_dict['width']
+        if override_size or output_csv:
+            print("checkpoint_encoder_sha256={}".format(checkpoint_sha256(encoder_path)))
+            print("requested_input={}x{}".format(input_width, input_height))
         dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
-                                           encoder_dict['height'], encoder_dict['width'],
+                                           input_height, input_width,
                                            [0], 4, is_train=False)
         dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
@@ -103,7 +127,7 @@ def evaluate(opt):
         pred_disps = []
 
         print("-> Computing predictions with size {}x{}".format(
-            encoder_dict['width'], encoder_dict['height']))
+            input_width, input_height))
 
         with torch.no_grad():
             for data in dataloader:
@@ -114,6 +138,9 @@ def evaluate(opt):
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
                 output = depth_decoder(encoder(input_color))
+                if not pred_disps and (override_size or output_csv):
+                    print("actual_input_shape={}".format(tuple(input_color.shape)))
+                    print("prediction_disp_shape={}".format(tuple(output[("disp", 0)].shape)))
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], opt.min_depth, opt.max_depth)
                 pred_disp = pred_disp.cpu()[:, 0].numpy()
@@ -228,6 +255,17 @@ def evaluate(opt):
 
     print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
     print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
+    if output_csv:
+        # Record the actual prediction size/count for both network and external predictions.
+        height, width = pred_disps.shape[-2:]
+        exists = os.path.isfile(output_csv)
+        with open(output_csv, "a", newline="") as stream:
+            writer = csv.writer(stream)
+            if not exists:
+                writer.writerow(["width", "height", "actual_tensor_shape", "AbsRel", "SqRel",
+                                 "RMSE", "RMSElog", "delta1", "delta2", "delta3", "num_images"])
+            writer.writerow([width, height, "{}x{}".format(height, width)] +
+                            [float(value) for value in mean_errors] + [len(errors)])
     print("\n-> Done!")
     return mean_errors
 
