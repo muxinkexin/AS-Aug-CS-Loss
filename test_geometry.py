@@ -3,9 +3,9 @@ import unittest
 import torch
 import torch.nn.functional as F
 
-from tools.step1.geometry import (apply_affine, cross_scale_loss, erode_valid_mask,
+from layers import (apply_affine, cross_scale_loss, erode_valid_mask,
                                   pixel_to_grid, view_affine)
-from tools.step1.scale_views import make_scale_views
+from datasets.scale_views import make_scale_views
 
 
 class GeometryTests(unittest.TestCase):

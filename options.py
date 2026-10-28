@@ -203,6 +203,21 @@ class MonodepthOptions:
                                       "from the original monodepth paper",
                                  action="store_true")
 
+        self.parser.add_argument("--eval_width", type=int, default=None,
+                                 help="override evaluation input width (requires --eval_height)")
+        self.parser.add_argument("--eval_height", type=int, default=None,
+                                 help="override evaluation input height (requires --eval_width)")
+        self.parser.add_argument("--output_csv", type=str, default=None,
+                                 help="append evaluation metrics to this CSV file")
+
+        # Experiment recipes share the original training entry point.
+        self.parser.add_argument("--config", type=str, default=None,
+                                 help="experiment JSON in experiments/; use with --stage")
+        self.parser.add_argument("--stage", choices=["check", "regression", "smoke", "train"],
+                                 default=None)
+        self.parser.add_argument("--max_updates", type=int, default=None,
+                                 help="optional optimizer-update limit (smoke recipes use this)")
+
         # Step 1 scale-training options. Disabled by default to preserve the
         # original Monodepth2 data order, random draws, forward path and loss.
         self.parser.add_argument("--scale_training", choices=["off", "ra_v1"], default="off")
@@ -214,6 +229,6 @@ class MonodepthOptions:
                                  default="valid_aware_half_pixel_v1")
         self.parser.add_argument("--save_scale_debug", action="store_true")
 
-    def parse(self):
-        self.options = self.parser.parse_args()
+    def parse(self, args=None):
+        self.options = self.parser.parse_args(args)
         return self.options

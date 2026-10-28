@@ -257,3 +257,92 @@ You can download our precomputed disparity predictions from the following links:
 Copyright © Niantic, Inc. 2019. Patent Pending.
 All rights reserved.
 Please see the [license file](LICENSE) for terms.
+## AS-Aug / CS-Loss 的项目组织与运行方式
+
+新增实现按 Monodepth2 原有职责组织，所有命令在仓库根目录执行：
+
+```text
+monodepth2/
+├── networks/                     # 原有深度与位姿网络，结构和参数名保持原样
+├── datasets/
+│   ├── mono_dataset.py           # 原有数据入口，按开关生成 L/M/H 视图
+│   └── scale_views.py            # 尺度视图、有效区域和几何元数据
+├── layers.py                     # 原有层、尺度几何与 CS-Loss
+├── options.py                    # 原有参数及尺度训练、实验配置、评估尺寸参数
+├── trainer.py                    # 原有训练器，包含 AS / CS 分支
+├── train.py                      # 统一训练入口，也提供 check / regression / smoke
+├── evaluate_depth.py             # 统一深度评估入口，可显式指定推理尺寸
+├── evaluate_pose.py              # 原有位姿评估入口
+├── test_simple.py                # 原有单图推理入口
+├── test_geometry.py              # 几何、掩码、CS 损失和梯度单元测试
+├── experiments/
+│   ├── step1_B0_existing.json
+│   ├── step1_B0_offcheck.json
+│   ├── step1_A0_as_only.json
+│   └── step1_A1_as_cs.json
+└── tmp/
+    ├── monodepth2-base/          # 原基线权重与配置
+    ├── step1/                    # 原 runs/step1 的所有日志、权重
+    └── step1_artifacts/          # 原 artifacts/step1 的清单、指标、报告
+```
+
+原生训练命令仍可使用，例如 `python train.py --data_path /home/zy/KITTI --model_name NAME`。
+不指定尺度训练参数时，`scale_training=off`、`cross_scale_weight=0`，走原有关闭分支。
+使用原生参数方式时，可通过 `--scale_training ra_v1 --cross_scale_weight 0` 启用 AS，
+通过 `--scale_training ra_v1 --cross_scale_weight 1` 启用 AS+CS；其余预算参数需显式按实验设置提供。
+
+已有四份实验 JSON 继续读取 `tmp/monodepth2-base/models/opt.json`，
+保持已记录的 batch size、学习率、训练轮数、初始化和尺度配置。
+配方模式仅接受 `--config`、`--stage`、`--max_updates`；其余设置来自 JSON 及其基线选项，
+不把原生命令行参数悄悄混入已有实验。请勿修改基线的 `opt.json` 来改变新实验，
+需要独立设置时应复制实验 JSON 和它引用的选项文件。
+
+```bash
+conda activate litemono
+
+# 配置检查和单元测试不需要 GPU
+python train.py --config experiments/step1_A0_as_only.json --stage check
+python train.py --config experiments/step1_A1_as_cs.json --stage check
+python -m unittest test_geometry -v
+```
+
+GPU 任务由使用者手动启动，单个进程使用一张 GPU。以下是迁移后的训练命令格式：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python train.py --config experiments/step1_B0_offcheck.json --stage regression
+CUDA_VISIBLE_DEVICES=0 python train.py --config experiments/step1_A0_as_only.json --stage smoke --max_updates 100
+CUDA_VISIBLE_DEVICES=1 python train.py --config experiments/step1_A1_as_cs.json --stage smoke --max_updates 100
+
+CUDA_VISIBLE_DEVICES=0 python train.py --config experiments/step1_A0_as_only.json --stage train
+CUDA_VISIBLE_DEVICES=1 python train.py --config experiments/step1_A1_as_cs.json --stage train
+```
+
+当前目录已包含上述实验的历史输出；配方入口保留了拒绝覆盖非空实验目录的行为，
+直接重复执行会报 `refusing to overwrite existing run directory`。
+如确需新跑一次，请复制实验 JSON 并为 `output_dir` 指定 `tmp/` 下的新路径，保留已有实验。
+`regression` 阶段沿用原实现，只执行一次关闭增强的训练更新，不代表完整的新旧实现回归验收。
+
+原有权重路径只有前缀变化，例如 A1 第 19 轮权重现位于：
+
+```text
+tmp/step1/A1_as_cs/0/step1_A1_as_cs_train/models/weights_19/
+```
+
+多分辨率评估直接使用原入口；`--eval_width` 和 `--eval_height` 必须同时提供。
+省略这两个参数时沿用 checkpoint 保存的输入尺寸。裁剪、视差缩放、深度范围和中位数对齐协议保持原样。
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python evaluate_depth.py \
+  --load_weights_folder tmp/step1/A1_as_cs/0/step1_A1_as_cs_train/models/weights_19 \
+  --eval_mono --eval_split eigen --data_path /home/zy/KITTI \
+  --eval_width 640 --eval_height 192 --num_workers 4 \
+  --output_csv tmp/step1_artifacts/A1_as_cs_multires_recheck.csv
+```
+
+其他评估尺寸为 `416x128`、`512x160`、`832x256`、`1024x320`（宽×高）。
+`--output_csv` 按行追加结果，重复评估会追加新行；已有原始结果完整保留在 `tmp/step1_artifacts/`。
+单图推理保留原有 `test_simple.py` 入口和模型选择参数。
+
+目录迁移验证与路径对照见 `tmp/step1_artifacts/layout_migration.md`。
+`monodepth2_step1_agent_execution.md` 保留为原始需求文档，其中旧目录命令以本节的新路径为准。
+历史 checkpoint 内 `opt.json` 和 TensorBoard 事件保留原始内容，因此其中的旧路径代表当时的运行记录。

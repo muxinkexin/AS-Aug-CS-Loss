@@ -236,7 +236,7 @@ class MonoDataset(data.Dataset):
         return inputs
 
     def _add_scale_views(self, inputs, color_aug, do_color_aug):
-        from tools.step1.scale_views import make_scale_views
+        from .scale_views import make_scale_views
 
         if self.is_train:
             low_scale = random.uniform(*self.scale_low_range)

@@ -24,7 +24,6 @@ from layers import *
 import datasets
 import networks
 from IPython import embed
-from tools.step1.geometry import cross_scale_loss, erode_valid_mask
 
 
 class Trainer:

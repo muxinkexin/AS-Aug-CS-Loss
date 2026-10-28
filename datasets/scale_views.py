@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from .geometry import view_affine
+from layers import view_affine
 
 
 def _resize(image, height, width):
