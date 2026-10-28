@@ -1,0 +1,14 @@
+{
+  "experiment_id": "A0_as_only",
+  "repo_root": "/home/tzq/tzq/3/monodepth2",
+  "baseline_manifest": "artifacts/step1/baseline_manifest.json",
+  "resolved_train_options": "tmp/monodepth2-base/models/opt.json",
+  "seed": 0,
+  "scale_training": "ra_v1",
+  "scale_low_range": [0.7, 0.9],
+  "scale_high_range": [1.1, 2.0],
+  "cross_scale_weight": 0.0,
+  "scale_geometry_mode": "valid_aware_half_pixel_v1",
+  "output_dir": "runs/step1/A0_as_only/0",
+  "eval_resolutions": [[640, 192], [416, 128], [512, 160], [832, 256], [1024, 320]]
+}
